@@ -1,100 +1,145 @@
-const puppeteer = require('puppeteer');
-const fs = require('fs');
-const path = require('path');
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// VSDT.js (ESM)
+import puppeteer from "puppeteer";
+import fs from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
 
-(async () => {
-  const browser = await puppeteer.launch({
-    headless: false,
-    executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    userDataDir: path.join('D:/'), // Đường dẫn đến thư mục dữ liệu người dùng của bạn
-    args: ['--profile-directory=Profile 5', '--start-maximized'],
-    defaultViewport: null,
-  });
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-  const page = await browser.newPage();
-  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+// tiện dụng: delay
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    // ✅ Đọc file và map ra danh sách từ khóa
-   const rawData = JSON.parse(fs.readFileSync('D:/Zecom AutoAgents/POD Project/Sticker/Scripts/ASIN.json', 'utf8'));
-   const keywords = rawData.map(entry => entry.Keyword); // 👈 Lấy giá trị "Keyword"
- 
-   for (const keyword of keywords) {
-    const keywordForUrl = keyword.trim().replace(/\s+/g, '+');
-    const url = `https://www.amazon.com/s?k=${keywordForUrl}`; 
+export async function run({
+                              keywordsFile = "./ASIN.json",   // có thể truyền đường dẫn khác nếu cần
+                              searchTermInStore = "sticker",  // từ khóa tìm trong store
+                              headless = process.env.HEADLESS !== "false", // local muốn thấy UI: đặt HEADLESS=false
+                          } = {}) {
+    // Đọc file JSON tương đối với file hiện tại (không dùng đường dẫn D:/ ...)
+    const filePath = path.resolve(__dirname, keywordsFile);
+    const raw = JSON.parse(await fs.readFile(filePath, "utf8"));
 
-  await page.goto(url, { waitUntil: 'domcontentloaded' });
+    // Hỗ trợ cả format có "Keyword" hoặc "keyword" hoặc "asin"
+    const keywords = raw
+        .map((e) => e.Keyword ?? e.keyword ?? e.asin)
+        .filter(Boolean);
 
-  // Chờ các liên kết sản phẩm tải xong
-  await page.waitForSelector('div.s-result-item');
-
-  // Lấy liên kết sản phẩm và kiểm tra xem có nhãn "Amazon's Choice" hay không
-  const productLinks = await page.$$eval('div.s-result-item', items => 
-    items
-      .map(item => {
-        const asin = item.getAttribute('data-asin'); // Lấy ASIN
-        const isAmazonChoice = item.querySelector('[aria-label="Amazon\'s Choice"]') !== null; // Kiểm tra nhãn "Amazon's Choice"
-        const isSponsored = item.querySelector('.puis-sponsored-label-text') !== null; 
-        return { asin, isAmazonChoice, isSponsored };
-      })
-      .filter(product => product.isAmazonChoice && !product.isSponsored) // Lọc ra những sản phẩm có nhãn "Amazon's Choice" và không có nhãn "Sponsored"
-      .map(product => product.asin)
-  );
-
-
-  // Mảng chứa kết quả tất cả các sản phẩm lấy được từ các store
-  const allResults = [];
-
-  for (const asin of productLinks) {
-
-    const storeUrl = `https://www.amazon.com/dp/${asin}`;  // Truy cập vào cửa hàng của ASIN
-
-    await page.goto(storeUrl, { waitUntil: 'domcontentloaded' });
-
-    const hasSellerProfile = await page.$('#sellerProfileTriggerId');
-    if (hasSellerProfile) {
-      await page.click('#sellerProfileTriggerId');
-    } else {
-      console.log('❌ Không tìm thấy sellerProfileTriggerId. Dừng toàn bộ quá trình.');
-      await browser.close();
-      process.exit(1);
+    if (keywords.length === 0) {
+        console.warn("⚠️ Không thấy trường Keyword/asin trong JSON.");
+        return [];
     }
 
-    await delay(2000); // Nghỉ 2s mỗi vòng
-    await page.waitForSelector('.a-link-normal', { visible: true });
+    // Cấu hình Puppeteer: Render (Linux) cần no-sandbox & không hard-code Chrome.exe
+    const browser = await puppeteer.launch({
+        headless,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        executablePath:
+            process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+        defaultViewport: null,
+    });
 
-    // Click vào sản phẩm để vào cửa hàng chính
-    await page.click('.a-link-normal');
-    await delay(2000); // Nghỉ 2s mỗi vòng
-
-    // Tìm ô nhập từ khóa "sticker" và nhập vào
-    await page.waitForSelector('#twotabsearchtextbox');
-    await page.type('#twotabsearchtextbox', 'sticker', { delay: 100 });
-
-    // Nhấn Enter hoặc tìm nút search và click vào
-    await page.keyboard.press('Enter');
-
-    // Chờ kết quả tìm kiếm sản phẩm
-    await page.waitForSelector('div.s-main-slot > div[data-asin]', { timeout: 5000 }).catch(() => console.log('❌ Không tìm thấy sản phẩm'));
-
-    // Lấy top 5 sản phẩm sticker
-    const productsOnPage = await page.$$eval('div.s-main-slot > div[data-asin]', items =>
-      items
-        .map(item => {
-          const asin = item.getAttribute('data-asin');
-          return asin && asin.length > 5 ? { asin } : null;
-        })
-        .filter(entry => entry !== null)
-        .slice(0, 5) // Lấy top 5
+    const page = await browser.newPage();
+    await page.setUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
     );
 
-    allResults.push(...productsOnPage);
+    const allResults = [];
 
-    await delay(3000); // Nghỉ 3s mỗi vòng
-  }
+    try {
+        for (const kw of keywords) {
+            const keywordForUrl = String(kw).trim().replace(/\s+/g, "+");
+            const url = `https://www.amazon.com/s?k=${keywordForUrl}`;
 
-  // Console log all results sau khi đã thu thập hết
-  console.log(`${JSON.stringify(allResults, null, 2)}`);}
+            await page.goto(url, { waitUntil: "domcontentloaded" });
+            await page.waitForSelector("div.s-result-item", { timeout: 15000 });
 
-  await browser.close();
-})();
+            // Lấy các ASIN có "Amazon's Choice" và KHÔNG sponsored
+            const productLinks = await page.$$eval("div.s-result-item", (items) =>
+                items
+                    .map((item) => {
+                        const asin = item.getAttribute("data-asin");
+                        const isAmazonChoice =
+                            item.querySelector('[aria-label="Amazon\'s Choice"]') !== null ||
+                            item.querySelector('[data-csa-c-type="badge"] [aria-label*="Amazon\'s Choice"]') !== null;
+                        const isSponsored =
+                            item.querySelector(".puis-sponsored-label-text") !== null ||
+                            item.querySelector('[aria-label="Sponsored"]') !== null;
+                        return { asin, isAmazonChoice, isSponsored };
+                    })
+                    .filter(
+                        (p) => p.asin && p.asin.length > 5 && p.isAmazonChoice && !p.isSponsored
+                    )
+                    .map((p) => p.asin)
+            );
+
+            for (const asin of productLinks) {
+                const storeUrl = `https://www.amazon.com/dp/${asin}`;
+                await page.goto(storeUrl, { waitUntil: "domcontentloaded" });
+
+                const hasSellerProfile = await page.$("#sellerProfileTriggerId");
+                if (!hasSellerProfile) {
+                    console.log(
+                        `❌ Không thấy sellerProfileTriggerId cho ASIN ${asin}, bỏ qua.`
+                    );
+                    continue; // đừng dừng toàn bộ, chỉ bỏ qua item lỗi
+                }
+
+                await page.click("#sellerProfileTriggerId");
+                await page.waitForSelector(".a-link-normal", { visible: true, timeout: 15000 }).catch(() => {});
+                // cố gắng click link dẫn vào store (trang Profile đôi khi khác nhau)
+                const links = await page.$$(".a-link-normal");
+                if (links.length > 0) {
+                    await links[0].click();
+                } else {
+                    console.log("❌ Không tìm thấy link vào store, bỏ qua.");
+                    continue;
+                }
+
+                await delay(1500);
+
+                // Tìm ô search trong store & search "sticker"
+                await page.waitForSelector("#twotabsearchtextbox", { timeout: 15000 });
+                await page.click("#twotabsearchtextbox", { delay: 50 });
+                await page.keyboard.down("Control");
+                await page.keyboard.press("A");
+                await page.keyboard.up("Control");
+                await page.type("#twotabsearchtextbox", searchTermInStore, { delay: 50 });
+                await page.keyboard.press("Enter");
+
+                // Lấy top 5 ASIN
+                await page
+                    .waitForSelector("div.s-main-slot > div[data-asin]", { timeout: 15000 })
+                    .catch(() => console.log("❌ Không tìm thấy sản phẩm trong store"));
+
+                const productsOnPage = await page.$$eval(
+                    "div.s-main-slot > div[data-asin]",
+                    (items) =>
+                        items
+                            .map((item) => {
+                                const asin = item.getAttribute("data-asin");
+                                return asin && asin.length > 5 ? { asin } : null;
+                            })
+                            .filter(Boolean)
+                            .slice(0, 5)
+                );
+
+                allResults.push(
+                    ...productsOnPage.map((p) => ({
+                        sourceKeyword: kw,
+                        storeAsin: asin,
+                        productAsin: p.asin,
+                    }))
+                );
+
+                await delay(1000);
+            }
+
+            await delay(1000);
+        }
+
+        console.log(JSON.stringify(allResults, null, 2));
+        return allResults;
+    } finally {
+        await browser.close();
+    }
+}

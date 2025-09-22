@@ -1,18 +1,11 @@
-import express from "express";
-import bodyParser from "body-parser";
+// server.js
 import { run as runVSDT } from "./VSDT.js";
 
-const app = express();
-app.use(bodyParser.json());
-
-app.post("/run", async (req, res) => {
-    try {
-        const data = await runVSDT(req.body || {});
-        res.json({ ok: true, data });
-    } catch (e) {
-        res.status(500).json({ ok: false, error: String(e.message) });
-    }
+runVSDT({
+    keywordsFile: "./ASIN.json",
+    searchTermInStore: "sticker",
+    // đặt HEADLESS=false khi chạy local muốn xem trình duyệt
+}).catch((err) => {
+    console.error(err);
+    process.exit(1);
 });
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("API server running on port " + PORT));
