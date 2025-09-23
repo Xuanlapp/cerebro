@@ -1,10 +1,11 @@
 {
-  "name": "vsdt-runner",
-  "version": "1.0.0",
+  "name": "web-automation",
   "type": "module",
-  "scripts": { "start": "node server.js" },
+  "scripts": {
+    "start": "node server.mjs"
+  },
   "dependencies": {
-    "puppeteer": "^22.0.0",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "playwright": "^1.47.0"
   }
 }

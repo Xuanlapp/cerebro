@@ -94,9 +94,7 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
             await delay(3000);
         }
     }
-
     // Xuất toàn bộ kết quả
     console.log('✅ Kết quả:', JSON.stringify(allResults, null, 2));
-
     await browser.close();
 })();
